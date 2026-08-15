@@ -1,0 +1,62 @@
+name: Build Windows
+
+# Builds Swayve for Windows by checking out the private swayve-client repo
+# and running the same steps its own (now-removed) build-windows.yml used to.
+# This lives in a public repo instead so the build runs on GitHub's free
+# Actions minutes rather than swayve-client's billed private-repo minutes.
+#
+# Manual only: cross-repo checkouts don't fire on a push to the other repo,
+# so trigger this after pushing to swayve-client with
+#   gh workflow run "Build Windows" --repo dazacode/swayve-ci -f ref=main
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'swayve-client branch, tag or commit to build'
+        required: false
+        default: main
+
+jobs:
+  build:
+    name: Release build
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out swayve-client
+        uses: actions/checkout@v4
+        with:
+          repository: dazacode/swayve-client
+          token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.6'
+          channel: stable
+          cache: true
+
+      - name: Fetch packages
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Fetch ffmpeg
+        shell: pwsh
+        continue-on-error: true
+        run: ./tool/fetch_ffmpeg.ps1
+
+      - name: Build
+        run: flutter build windows --release
+
+      - name: Upload the app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Swayve-windows
+          path: build/windows/x64/runner/Release/
+          if-no-files-found: error
+          retention-days: 30

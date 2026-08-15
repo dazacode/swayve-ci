@@ -1,0 +1,90 @@
+name: Build iOS IPA
+
+# Builds an unsigned .ipa by checking out the private swayve-client repo on a
+# macOS runner. Lives here (public) rather than in swayve-client (private) so
+# the build runs on free Actions minutes instead of billed ones — a macOS
+# runner is the most expensive minute there is.
+#
+# Manual only — trigger after pushing to swayve-client with
+#   gh workflow run "Build iOS IPA" --repo dazacode/swayve-ci -f ref=main
+# Download the artifact from the run summary and install it with
+# Sideloadly / AltStore, or re-sign it yourself.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'swayve-client branch, tag or commit to build'
+        required: false
+        default: main
+
+jobs:
+  build:
+    name: Unsigned IPA
+    # macos-26, not macos-15: the app icon is an Icon Composer bundle
+    # (ios/Runner/AppIcon.icon) and only Xcode 26's asset catalog compiler
+    # knows that format.
+    runs-on: macos-26
+
+    steps:
+      - name: Check out swayve-client
+        uses: actions/checkout@v4
+        with:
+          repository: dazacode/swayve-client
+          token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.6'
+          channel: stable
+          cache: true
+
+      - name: Report toolchain
+        run: |
+          flutter --version
+          flutter doctor -v
+
+      - name: Fetch packages
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Build iOS (unsigned)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package Runner.app into an IPA
+        run: |
+          set -euo pipefail
+          APP="build/ios/iphoneos/Runner.app"
+          test -d "$APP" || { echo "::error::$APP was not produced"; exit 1; }
+
+          rm -rf build/ipa
+          mkdir -p build/ipa/Payload
+          cp -R "$APP" build/ipa/Payload/
+          (cd build/ipa && zip -qry Swayve-unsigned.ipa Payload)
+
+          ls -lh build/ipa/Swayve-unsigned.ipa
+
+      - name: Upload the IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Swayve-unsigned-ipa
+          path: build/ipa/Swayve-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-diagnostics
+          path: |
+            ios/Podfile.lock
+            ios/Flutter/Generated.xcconfig
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,81 @@
+name: Build Android APK
+
+# Builds Swayve's Android APKs by checking out the private swayve-client repo.
+# Lives here (public) rather than in swayve-client (private) so the build runs
+# on free Actions minutes instead of billed ones.
+#
+# Manual only — trigger after pushing to swayve-client with
+#   gh workflow run "Build Android APK" --repo dazacode/swayve-ci -f ref=main
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'swayve-client branch, tag or commit to build'
+        required: false
+        default: main
+
+jobs:
+  build:
+    name: Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out swayve-client
+        uses: actions/checkout@v4
+        with:
+          repository: dazacode/swayve-client
+          token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Set up the JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.6'
+          channel: stable
+          cache: true
+
+      - name: Report toolchain
+        run: |
+          flutter --version
+          flutter doctor -v
+
+      - name: Fetch packages
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Build the APKs
+        run: flutter build apk --release --split-per-abi
+
+      - name: Show what was produced
+        run: ls -lh build/app/outputs/flutter-apk/
+
+      - name: Upload the APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Swayve-android-apk
+          path: build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-diagnostics
+          path: |
+            android/local.properties
+            build/app/outputs/logs/
+          if-no-files-found: ignore
+          retention-days: 7
