@@ -1,0 +1,83 @@
+name: Build Linux
+
+# Builds and packages Swayve for Linux (AppImage, .deb, .rpm) by checking out
+# the private swayve-client repo and running the same toolchain validated
+# during the Linux port's WSL development work (see swayve-client's
+# docs/linux-port-audit.md and docs/linux-wsl-development.md). Lives here for
+# the same reason build-windows.yml does: free Actions minutes on a public
+# repo rather than billed minutes on the private one.
+#
+# Manual only, same as every other build workflow here:
+#   gh workflow run "Build Linux" --repo dazacode/swayve-ci -f ref=main
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'swayve-client branch, tag or commit to build'
+        required: false
+        default: main
+
+jobs:
+  build:
+    name: Release build and package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out swayve-client
+        uses: actions/checkout@v4
+        with:
+          repository: dazacode/swayve-client
+          token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.0'
+          channel: stable
+          cache: true
+
+      # gstreamer1.0-plugins-{base,good} aren't linked at build time -- playbin,
+      # audioconvert, capsfilter and friends are GStreamer plugins the sound
+      # engine loads at runtime, not ELF dependencies of the binary -- but the
+      # analyze/test/build steps below don't touch a real GStreamer pipeline
+      # either, so this only needs to be complete enough for `flutter build
+      # linux` (clang/cmake/ninja/pkg-config/libgtk-3-dev/the -dev gstreamer
+      # headers) and the packaging scripts (rpm/librsvg2-bin/desktop-file-
+      # utils/fakeroot) to succeed.
+      - name: Install Linux desktop + packaging toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            rpm librsvg2-bin desktop-file-utils fakeroot
+
+      - run: flutter config --enable-linux-desktop
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+      - name: Fetch ffmpeg
+        continue-on-error: true
+        run: ./tool/fetch_ffmpeg.sh
+
+      - name: Build
+        run: flutter build linux --release
+
+      - name: Package (AppImage, .deb, .rpm)
+        run: |
+          set -euo pipefail
+          ./tool/package_linux_appimage.sh
+          ./tool/package_linux_deb.sh
+          ./tool/package_linux_rpm.sh
+          (cd dist/linux && sha256sum *.AppImage *.deb *.rpm > SHA256SUMS)
+
+      - name: Upload the packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: Swayve-linux
+          path: dist/linux/
+          if-no-files-found: error
+          retention-days: 30

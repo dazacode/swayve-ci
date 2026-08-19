@@ -17,6 +17,7 @@ doesn't cross repos on its own, so a build is triggered after the fact:
 
 ```bash
 gh workflow run "Build Windows" --repo dazacode/swayve-ci -f ref=main
+gh workflow run "Build Linux" --repo dazacode/swayve-ci -f ref=main
 gh workflow run "Build Android APK" --repo dazacode/swayve-ci -f ref=main
 gh workflow run "Build iOS IPA" --repo dazacode/swayve-ci -f ref=main
 gh workflow run Release --repo dazacode/swayve-ci -f version=v1.1.0
