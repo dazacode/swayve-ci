@@ -226,6 +226,12 @@ jobs:
         # starts. xvfb-run gives it a virtual one just for these three calls.
         run: |
           set -euo pipefail
+          # dist/linux/ carries prior betas' binaries in git (committed
+          # release artifacts, per swayve-client's own convention) — this
+          # checkout brings them along, and the packaging scripts only add
+          # to that directory, never clear it. Left alone, every past
+          # platform binary ships bundled into every new release.
+          rm -rf dist/linux
           chmod +x tool/package_linux_*.sh
           xvfb-run -a tool/package_linux_appimage.sh
           xvfb-run -a tool/package_linux_deb.sh
