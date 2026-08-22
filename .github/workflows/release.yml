@@ -174,9 +174,67 @@ jobs:
           path: '*.zip'
           if-no-files-found: error
 
+  linux:
+    name: Linux packages
+    needs: version
+    runs-on: ubuntu-latest
+    # Linux packaging has never run for real before — a first-run dependency
+    # or GStreamer version mismatch here shouldn't take down the whole
+    # release. Matches how beta 2 already tolerated Linux being handled
+    # separately (it was packaged and attached by hand).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: dazacode/swayve-client
+          token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Install Linux build and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev \
+            liblzma-dev libstdc++-12-dev build-essential libsecret-1-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio \
+            librsvg2-bin fakeroot rpm
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.0'
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+      - name: Build Linux
+        run: >
+          flutter build linux --release
+          --dart-define=MUSICSYNC_VERSION=${{ needs.version.outputs.number }}
+          --build-name=${{ needs.version.outputs.number }}
+
+      - name: Package AppImage, .deb, .rpm
+        run: |
+          set -euo pipefail
+          chmod +x tool/package_linux_*.sh
+          tool/package_linux_appimage.sh
+          tool/package_linux_deb.sh
+          tool/package_linux_rpm.sh
+
+      - name: List what was produced
+        run: ls -lh dist/linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/linux/*
+          if-no-files-found: error
+
   publish:
     name: Publish release
-    needs: [version, ios, android, windows]
+    needs: [version, ios, android, windows, linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -201,6 +259,10 @@ jobs:
             computer that holds the library, and the phone that syncs from it.
 
             - **Windows** — unzip and run `music_sync.exe`.
+            - **Linux** — three packages, pick one: the `.AppImage` needs no
+              install and runs on essentially any x86_64 distro; the `.deb` is
+              for Ubuntu/Debian and derivatives; the `.rpm` is for Fedora and
+              other RPM-based distros.
             - **Android** — take `arm64-v8a` unless you know otherwise; it
               covers essentially every phone still in use. You'll need "install
               unknown apps" enabled. Nothing expires.
