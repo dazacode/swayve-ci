@@ -219,6 +219,21 @@ jobs:
             libwpewebkit-1.0-dev libwpebackend-fdo-1.0-dev libwpe-1.0-dev \
             libepoxy-dev libwayland-dev
 
+      - name: Install a Clang new enough for flutter_inappwebview_linux
+        # jammy's own clang is 14, which does not recognize
+        # -Wno-deprecated-literal-operator (a flag only Clang 18+ knows about)
+        # -- flutter_inappwebview_linux passes it unconditionally and builds
+        # with -Werror, so an old clang turns "unknown warning flag" into a
+        # hard build failure. Installed via LLVM's own official script rather
+        # than a PPA, and exported as CC/CXX so every later step (including
+        # `flutter build linux`'s own CMake invocation) picks it up.
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 18
+          echo "CC=clang-18" >> "$GITHUB_ENV"
+          echo "CXX=clang++-18" >> "$GITHUB_ENV"
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.47.0'
