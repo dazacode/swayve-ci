@@ -177,7 +177,12 @@ jobs:
   linux:
     name: Linux packages
     needs: version
-    runs-on: ubuntu-latest
+    # Pinned to 22.04 rather than ubuntu-latest: flutter_inappwebview_linux's
+    # WPE WebKit backend needs libwpewebkit-1.0-dev, which Ubuntu dropped from
+    # its archive in 24.04 (noble) — 22.04 (jammy) still carries it in
+    # universe. Move this back to ubuntu-latest if a later version of the
+    # plugin drops the 1.0 API dependency.
+    runs-on: ubuntu-22.04
     # Linux packaging has never run for real before — a first-run dependency
     # or GStreamer version mismatch here shouldn't take down the whole
     # release. Matches how beta 2 already tolerated Linux being handled
