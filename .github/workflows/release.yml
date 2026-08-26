@@ -197,7 +197,7 @@ jobs:
             liblzma-dev libstdc++-12-dev build-essential libsecret-1-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio \
-            librsvg2-bin fakeroot rpm xvfb
+            librsvg2-bin fakeroot rpm xvfb libwpewebkit-1.0-dev
 
       - uses: subosito/flutter-action@v2
         with:
