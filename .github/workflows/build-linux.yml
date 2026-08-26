@@ -1,0 +1,83 @@
+name: Build Linux
+
+# Builds Swayve for Linux by checking out the private swayve-client repo and
+# running the same steps release.yml's own `linux` job uses, minus the
+# version-tag plumbing. Lives here for the same reason build-windows.yml
+# does: free public-repo Actions minutes instead of swayve-client's billed
+# private-repo minutes.
+#
+# Manual only: cross-repo checkouts don't fire on a push to the other repo,
+# so trigger this after pushing to swayve-client with
+#   gh workflow run "Build Linux" --repo dazacode/swayve-ci -f ref=main
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'swayve-client branch, tag or commit to build'
+        required: false
+        default: main
+
+jobs:
+  build:
+    name: Release build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out swayve-client
+        uses: actions/checkout@v4
+        with:
+          repository: dazacode/swayve-client
+          token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Install Linux build and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev \
+            liblzma-dev libstdc++-12-dev build-essential libsecret-1-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio \
+            librsvg2-bin fakeroot rpm xvfb
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.0'
+          channel: stable
+          cache: true
+
+      - name: Fetch packages
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Build Linux
+        run: flutter build linux --release
+
+      - name: Package AppImage, .deb, .rpm
+        # Same xvfb requirement as release.yml's linux job: the packaging
+        # scripts print `--version` from the built GtkApplication binary to
+        # read what to package under, and even that needs a display to
+        # register against on a headless runner.
+        run: |
+          set -euo pipefail
+          rm -rf dist/linux
+          chmod +x tool/package_linux_*.sh
+          xvfb-run -a tool/package_linux_appimage.sh
+          xvfb-run -a tool/package_linux_deb.sh
+          xvfb-run -a tool/package_linux_rpm.sh
+
+      - name: List what was produced
+        run: ls -lh dist/linux
+
+      - name: Upload the app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Swayve-linux
+          path: dist/linux/*
+          if-no-files-found: error
+          retention-days: 30
