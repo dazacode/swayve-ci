@@ -205,11 +205,19 @@ jobs:
           # Ubuntu behavior, not a runner bug, by a runner-images maintainer:
           # https://github.com/actions/runner-images/issues/9546
           sudo apt-get remove -y 'libunwind-*'
+          # flutter_inappwebview_linux's CMakeLists.txt checks for epoxy,
+          # gtk+-3.0, a WPE WebKit, a WPE backend (WPEPlatform 2.0+ or the
+          # legacy wpebackend-fdo-1.0), libwpe itself, libsecret-1 and
+          # wayland-server -- read in full from upstream to install every
+          # dependency it can fail on in one pass rather than one CI run per
+          # missing package.
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev \
             liblzma-dev libstdc++-12-dev build-essential libsecret-1-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio \
-            librsvg2-bin fakeroot rpm xvfb libwpewebkit-1.0-dev
+            librsvg2-bin fakeroot rpm xvfb \
+            libwpewebkit-1.0-dev libwpebackend-fdo-1.0-dev libwpe-1.0-dev \
+            libepoxy-dev libwayland-dev
 
       - uses: subosito/flutter-action@v2
         with:
