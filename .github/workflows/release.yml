@@ -198,6 +198,13 @@ jobs:
       - name: Install Linux build and packaging dependencies
         run: |
           sudo apt-get update
+          # The runner image preinstalls LLVM 14, which brings in
+          # libunwind-14(-dev) — a "slotted" package that Breaks: the plain
+          # libunwind-dev libgstreamer1.0-dev depends on, so apt reports the
+          # combined install below as unresolvable. Confirmed as expected
+          # Ubuntu behavior, not a runner bug, by a runner-images maintainer:
+          # https://github.com/actions/runner-images/issues/9546
+          sudo apt-get remove -y 'libunwind-*'
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev \
             liblzma-dev libstdc++-12-dev build-essential libsecret-1-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
