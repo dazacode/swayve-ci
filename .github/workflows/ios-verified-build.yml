@@ -1,0 +1,236 @@
+name: iOS Verified Build
+
+# The plain "Build iOS IPA" workflow (build-ios.yml) trusts flutter analyze +
+# flutter test + a successful compile and hands over an IPA. That trust broke
+# once: a build that passed every one of those gates still crashed a real
+# device on every single launch (NSInternalInconsistencyException from
+# directly mutating a UITabBarController-owned UITabBar — see swayve-client's
+# ios/Runner/NativeTabBarBridge.swift for the fix). None of analyze, test, or
+# a clean compile can catch a crash that only happens when the app actually
+# runs, because none of them run it.
+#
+# This workflow adds the gates that do: boot a Simulator, install the app,
+# launch it, watch its own system log for the exact fatal signatures a crash
+# like that produces, and refuse to produce an IPA at all if anything fires.
+# It also runs swayve-client's `integration_test/app_launch_test.dart` —
+# `app.main()` on a real engine with real platform channels, the same native
+# code path (SceneDelegate, NativeTabBarBridge, NativePlayerStateBridge) a
+# physical device exercises, which the plain widget-test harness in `test/`
+# cannot reach at all.
+#
+# What this cannot do: drive an actual tap on the native UITabBar itself.
+# That bar is a real UIKit view sitting outside Flutter's own widget tree, so
+# Flutter's own testing tools (including integration_test) cannot see or tap
+# it — only a native XCUITest, with its own Xcode test target, can drive the
+# accessibility tree at the OS level. Adding one safely means hand-authoring a
+# new Xcode target into project.pbxproj without Xcode itself available to
+# generate or validate it, which is a real risk to the one pbxproj everything
+# else here already depends on. Left for a deliberate follow-up rather than
+# attempted here under this workflow's own risk budget — see the project's
+# own notes for the day this was written for the reasoning in full.
+#
+# Manual only — trigger after pushing to swayve-client with
+#   gh workflow run "iOS Verified Build" --repo dazacode/swayve-ci -f ref=main
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'swayve-client branch, tag or commit to build'
+        required: false
+        default: main
+
+jobs:
+  verify-and-build:
+    name: Verify + Build IPA
+    # macos-26, not macos-15: the app icon is an Icon Composer bundle
+    # (ios/Runner/AppIcon.icon) and only Xcode 26's asset catalog compiler
+    # knows that format — same reason build-ios.yml pins this.
+    runs-on: macos-26
+
+    steps:
+      - name: Check out swayve-client
+        uses: actions/checkout@v4
+        with:
+          repository: dazacode/swayve-client
+          token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
+          ref: ${{ github.event.inputs.ref }}
+
+      # ---------------------------------------------------------- 6. Exact ref
+      - name: Resolve and print exact ref
+        id: ref
+        run: |
+          set -euo pipefail
+          SHA=$(git rev-parse HEAD)
+          SHORT=$(git rev-parse --short=10 HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "short=$SHORT" >> "$GITHUB_OUTPUT"
+          echo "Building commit $SHA (requested ref: '${{ github.event.inputs.ref }}')"
+          git log -1 --format='%H %s'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.0'
+          channel: stable
+          cache: true
+
+      - name: Report toolchain
+        run: |
+          flutter --version
+          flutter doctor -v
+
+      - name: Fetch packages
+        run: flutter pub get
+
+      # ------------------------------------------------------- 1. Static checks
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Unit + widget tests
+        run: flutter test
+
+      # ---------------------------------------------------- 2/3/4. Simulator
+      - name: Boot an iOS Simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          UDID=$(xcrun simctl list devices available -j \
+            | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for runtime, devices in data['devices'].items():
+    if 'iOS' not in runtime:
+        continue
+    for d in devices:
+        if 'iPhone' in d['name']:
+            print(d['udid'])
+            sys.exit(0)
+raise SystemExit('no iOS iPhone simulator found')
+")
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          echo "Using simulator $UDID"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+
+      - name: Build for Simulator
+        run: flutter build ios --debug --simulator
+
+      - name: Install on Simulator
+        run: |
+          xcrun simctl install "${{ steps.sim.outputs.udid }}" \
+            build/ios/iphonesimulator/Runner.app
+
+      - name: Start simulator log capture
+        run: |
+          nohup xcrun simctl spawn "${{ steps.sim.outputs.udid }}" \
+            log stream --level debug --style syslog \
+            --predicate 'process == "Runner"' \
+            > sim-console.log 2>&1 &
+          echo $! > log-stream.pid
+          # log stream takes a moment to attach; losing the first second of a
+          # launch that happens immediately after would defeat the point.
+          sleep 3
+
+      - name: Launch and hold
+        run: |
+          set -euo pipefail
+          xcrun simctl launch "${{ steps.sim.outputs.udid }}" dev.seanmusic.musicSync
+          # Long enough to catch an immediate crash and a slower one (a hang
+          # that a launch watchdog would eventually kill for) without making
+          # every dispatch of this workflow slow for its own sake.
+          sleep 15
+          if ! xcrun simctl spawn "${{ steps.sim.outputs.udid }}" launchctl list \
+              | grep -q 'dev\.seanmusic\.musicSync'; then
+            echo "::error::Runner is no longer running 15s after launch — it exited or crashed"
+            exit 1
+          fi
+          echo "Runner still running 15s after launch."
+
+      - name: Run the launch-survival integration test
+        # Runs app.main() for real -- SceneDelegate, NativeTabBarBridge,
+        # NativePlayerStateBridge and all -- inside integration_test's own
+        # engine rather than the widget-test harness, which fakes platform
+        # channels and cannot reach any of that native code at all. See
+        # integration_test/app_launch_test.dart's own doc comment.
+        run: |
+          flutter test integration_test/app_launch_test.dart \
+            -d "${{ steps.sim.outputs.udid }}"
+
+      - name: Stop simulator log capture
+        if: always()
+        run: |
+          if [ -f log-stream.pid ]; then
+            kill "$(cat log-stream.pid)" 2>/dev/null || true
+            sleep 1
+          fi
+
+      # -------------------------------------------------------- 5. Crash gate
+      - name: Scan simulator log for fatal signatures
+        if: always()
+        run: |
+          set -euo pipefail
+          PATTERN='Terminating app due to uncaught exception|NSInternalInconsistencyException|NSInvalidArgumentException|SIGABRT|EXC_CRASH|EXC_BAD_ACCESS|Fatal error|abort\(\) called'
+          if [ -f sim-console.log ] && grep -qE "$PATTERN" sim-console.log; then
+            echo "::error::Fatal signature found in the simulator's own console log"
+            grep -E "$PATTERN" sim-console.log
+            exit 1
+          fi
+          echo "No fatal signature found in the simulator log."
+
+      - name: Upload simulator log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-console-log
+          path: sim-console.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Shut down the simulator
+        if: always()
+        run: xcrun simctl shutdown "${{ steps.sim.outputs.udid }}" || true
+
+      # ------------------------------------------------- Archive/sign (device)
+      # Every step above must have exited 0 for the job to still be running
+      # here — a GitHub Actions job stops at the first failing step by
+      # default, so there is no separate "gate" to wire; reaching this line is
+      # the gate.
+      - name: Build iOS (unsigned, device)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package Runner.app into an IPA
+        run: |
+          set -euo pipefail
+          APP="build/ios/iphoneos/Runner.app"
+          test -d "$APP" || { echo "::error::$APP was not produced"; exit 1; }
+
+          rm -rf build/ipa
+          mkdir -p build/ipa/Payload
+          cp -R "$APP" build/ipa/Payload/
+          NAME="Swayve-unsigned-${{ steps.ref.outputs.short }}.ipa"
+          (cd build/ipa && zip -qry "$NAME" Payload)
+          echo "ipa_name=$NAME" >> "$GITHUB_ENV"
+          ls -lh "build/ipa/$NAME"
+
+      - name: Upload the IPA
+        uses: actions/upload-artifact@v4
+        with:
+          # The exact ref this build came from, baked into the artifact name
+          # itself (item 6) — not just this run's own metadata, which is easy
+          # to lose track of once a few builds have piled up in the Actions
+          # tab.
+          name: Swayve-unsigned-ipa-${{ steps.ref.outputs.short }}
+          path: build/ipa/${{ env.ipa_name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-diagnostics
+          path: |
+            ios/Podfile.lock
+            ios/Flutter/Generated.xcconfig
+          if-no-files-found: ignore
+          retention-days: 7
