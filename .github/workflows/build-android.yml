@@ -70,6 +70,43 @@ jobs:
       - name: Test
         run: flutter test
 
+      # flutter_inappwebview_android 1.1.3 -- what `flutter_inappwebview: 6.1.5`
+      # resolves to -- still calls `getDefaultProguardFile('proguard-android.txt')`,
+      # which AGP 9 removed for including `-dontoptimize`. Gradle fails while
+      # merely evaluating that subproject, so the app never gets as far as being
+      # compiled, and no amount of configuration on our side is reached.
+      #
+      # Fixing it in the app's own dependency graph is not currently possible:
+      # the first release that asks for `proguard-android-optimize.txt` is
+      # 1.2.0-beta.3, and it is only reachable from the 1.4.0-beta platform
+      # interface, which fails 61 of swayve-client's tests. Bumping the facade
+      # to the 6.2 beta instead pulls in `flutter_inappwebview_linux`, which is
+      # what swayve-client@e27bba5 pinned to 6.1.5 to get rid of -- that
+      # backend needs a WPE WebKit no mainstream distro packages, and a
+      # federated implementation is compiled whether or not any Dart calls it.
+      #
+      # So the one deprecated filename is rewritten in the throwaway pub cache
+      # of this runner, touching nothing in either repository. `-print -quit`
+      # takes the first match and the grep afterwards asserts the rewrite
+      # actually happened, so this fails loudly if upstream ships a stable
+      # 1.2.0 and the path or the string stops matching -- at which point this
+      # step should be deleted rather than repaired.
+      - name: Patch flutter_inappwebview_android's removed ProGuard API
+        run: |
+          set -euo pipefail
+          gradle_file="$(find "${PUB_CACHE:-$HOME/.pub-cache}"             -path '*/flutter_inappwebview_android-*/android/build.gradle'             -print -quit)"
+          if [ -z "$gradle_file" ]; then
+            echo "flutter_inappwebview_android is no longer a dependency; delete this step." >&2
+            exit 1
+          fi
+          echo "Patching $gradle_file"
+          sed -i "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" "$gradle_file"
+          if grep -q "getDefaultProguardFile('proguard-android\.txt')" "$gradle_file"; then
+            echo "The rewrite did not take." >&2
+            exit 1
+          fi
+          grep -n 'getDefaultProguardFile' "$gradle_file"
+
       - name: Build the APKs
         run: flutter build apk --release --split-per-abi
 
