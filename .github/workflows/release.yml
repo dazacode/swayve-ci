@@ -125,6 +125,35 @@ jobs:
       - run: flutter analyze
       - run: flutter test
 
+      # Same workaround build-android.yml carries, and for the same reason:
+      # flutter_inappwebview_android 1.1.3 calls
+      # `getDefaultProguardFile('proguard-android.txt')`, which AGP 9 removed,
+      # so Gradle fails while evaluating that subproject and the app is never
+      # compiled. Fixing it in swayve-client's dependency graph is not
+      # currently possible -- the fixed plugin release needs the 1.4.0-beta
+      # platform interface (61 test failures) and the 6.2 beta facade drags
+      # back flutter_inappwebview_linux, which is what pinning 6.1.5 removed.
+      #
+      # Rewritten in this runner's throwaway pub cache, touching neither
+      # repository. Delete from both workflows together when upstream ships a
+      # stable 1.2.0.
+      - name: Patch flutter_inappwebview_android's removed ProGuard API
+        run: |
+          set -euo pipefail
+          patched=0
+          while IFS= read -r gradle_file; do
+            case "$gradle_file" in */example/*) continue ;; esac
+            grep -q "getDefaultProguardFile('proguard-android\.txt')" "$gradle_file" || continue
+            echo "Patching $gradle_file"
+            sed -i "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" "$gradle_file"
+            patched=$((patched + 1))
+          done < <(find "${PUB_CACHE:-$HOME/.pub-cache}" -path '*/flutter_inappwebview_android-*/*build.gradle*' -type f)
+          if [ "$patched" -eq 0 ]; then
+            echo "Nothing needed patching. If upstream shipped a fixed release, delete this step." >&2
+            exit 1
+          fi
+          echo "Patched $patched file(s)."
+
       - name: Build the APKs
         run: >
           flutter build apk --release --split-per-abi
