@@ -94,18 +94,19 @@ jobs:
       - name: Patch flutter_inappwebview_android's removed ProGuard API
         run: |
           set -euo pipefail
-          gradle_file="$(find "${PUB_CACHE:-$HOME/.pub-cache}"             -path '*/flutter_inappwebview_android-*/android/build.gradle'             -print -quit)"
-          if [ -z "$gradle_file" ]; then
-            echo "flutter_inappwebview_android is no longer a dependency; delete this step." >&2
+          patched=0
+          while IFS= read -r gradle_file; do
+            case "$gradle_file" in */example/*) continue ;; esac
+            grep -q "getDefaultProguardFile('proguard-android\.txt')" "$gradle_file" || continue
+            echo "Patching $gradle_file"
+            sed -i "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" "$gradle_file"
+            patched=$((patched + 1))
+          done < <(find "${PUB_CACHE:-$HOME/.pub-cache}" -path '*/flutter_inappwebview_android-*/*build.gradle*' -type f)
+          if [ "$patched" -eq 0 ]; then
+            echo "Nothing needed patching. If upstream shipped a fixed release, delete this step." >&2
             exit 1
           fi
-          echo "Patching $gradle_file"
-          sed -i "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" "$gradle_file"
-          if grep -q "getDefaultProguardFile('proguard-android\.txt')" "$gradle_file"; then
-            echo "The rewrite did not take." >&2
-            exit 1
-          fi
-          grep -n 'getDefaultProguardFile' "$gradle_file"
+          echo "Patched $patched file(s)."
 
       - name: Build the APKs
         run: flutter build apk --release --split-per-abi
