@@ -39,6 +39,18 @@ on:
         required: false
         default: main
 
+# Every build authenticates to swayve-client with SWAYVE_CLIENT_TOKEN, not with
+# GITHUB_TOKEN, and writes nothing back to this repo. Declared here so the job's
+# authority is a property of the workflow rather than of a repository setting.
+permissions:
+  contents: read
+
+# One verified build per ref at a time: re-dispatching supersedes the run
+# already in flight.
+concurrency:
+  group: ios-verified-${{ inputs.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify-and-build:
     name: Verify + Build IPA
@@ -49,26 +61,33 @@ jobs:
 
     steps:
       - name: Check out swayve-client
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: dazacode/swayve-client
           token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
+          # No step here pushes, so the PAT is not kept in .git/config where
+          # everything the build runs afterwards could read it.
+          persist-credentials: false
 
       # ---------------------------------------------------------- 6. Exact ref
       - name: Resolve and print exact ref
         id: ref
+        env:
+          # The dispatch input reaches the shell as an environment variable, never
+          # as text pasted into the script by ${{ }} expansion.
+          REQUESTED_REF: ${{ inputs.ref }}
         run: |
           set -euo pipefail
           SHA=$(git rev-parse HEAD)
           SHORT=$(git rev-parse --short=10 HEAD)
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "short=$SHORT" >> "$GITHUB_OUTPUT"
-          echo "Building commit $SHA (requested ref: '${{ github.event.inputs.ref }}')"
+          echo "Building commit $SHA (requested ref: '$REQUESTED_REF')"
           git log -1 --format='%H %s'
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: '3.47.0'
           channel: stable
@@ -175,7 +194,7 @@ jobs:
 
       - name: Upload simulator log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: simulator-console-log
           path: sim-console.log
@@ -209,7 +228,7 @@ jobs:
           ls -lh "build/ipa/$NAME"
 
       - name: Upload the IPA
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           # The exact ref this build came from, baked into the artifact name
           # itself (item 6) — not just this run's own metadata, which is easy
@@ -222,7 +241,7 @@ jobs:
 
       - name: Upload build logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ios-build-diagnostics
           path: |

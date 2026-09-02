@@ -1,0 +1,28 @@
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------------
+  # GitHub Actions. Every `uses:` in this repo is pinned to a full commit SHA
+  # with the human-readable version in a trailing comment — a mutable tag can be
+  # repointed by its owner, and these workflows hand SWAYVE_CLIENT_TOKEN to the
+  # actions they run. Dependabot understands that form: it bumps the SHA and
+  # rewrites the comment together, which is the only thing that keeps a pinned
+  # workflow from silently rotting on an unpatched version.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns:
+          - "*"

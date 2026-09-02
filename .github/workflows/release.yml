@@ -20,6 +20,17 @@ on:
         description: 'Version to build, e.g. v1.1.0 — must already be tagged on swayve-client'
         required: true
 
+# Every build authenticates to swayve-client with SWAYVE_CLIENT_TOKEN, not with
+# GITHUB_TOKEN, and writes nothing back to this repo. Declared here so the job's
+# authority is a property of the workflow rather than of a repository setting.
+permissions:
+  contents: read
+
+# Never cancel a release mid-flight; queue instead.
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
 jobs:
   version:
     name: Resolve version
@@ -32,7 +43,7 @@ jobs:
         id: pick
         run: |
           set -euo pipefail
-          TAG="${{ github.event.inputs.version }}"
+          TAG="${{ inputs.version }}"
           case "$TAG" in
             v*) ;;
             *) echo "::error::Version must start with 'v' (got '$TAG')"; exit 1 ;;
@@ -45,12 +56,15 @@ jobs:
     needs: version
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: dazacode/swayve-client
           token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
           ref: ${{ needs.version.outputs.tag }}
-      - uses: subosito/flutter-action@v2
+          # No step here pushes, so the PAT is not kept in .git/config where
+          # everything the build runs afterwards could read it.
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: '3.47.0'
           channel: stable
@@ -77,7 +91,7 @@ jobs:
           cp -R "$APP" build/ipa/Payload/
           (cd build/ipa && zip -qry "Swayve-${{ needs.version.outputs.tag }}-unsigned.ipa" Payload)
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ipa
           path: build/ipa/*.ipa
@@ -88,17 +102,20 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: dazacode/swayve-client
           token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
           ref: ${{ needs.version.outputs.tag }}
-      - uses: actions/setup-java@v4
+          # No step here pushes, so the PAT is not kept in .git/config where
+          # everything the build runs afterwards could read it.
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: '3.47.0'
           channel: stable
@@ -125,7 +142,7 @@ jobs:
           done
           ls -lh Swayve-*.apk
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: android
           path: build/app/outputs/flutter-apk/Swayve-*.apk
@@ -136,12 +153,15 @@ jobs:
     needs: version
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: dazacode/swayve-client
           token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
           ref: ${{ needs.version.outputs.tag }}
-      - uses: subosito/flutter-action@v2
+          # No step here pushes, so the PAT is not kept in .git/config where
+          # everything the build runs afterwards could read it.
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: '3.47.0'
           channel: stable
@@ -168,7 +188,7 @@ jobs:
           if (-not (Test-Path $src)) { throw "$src was not produced" }
           Compress-Archive -Path "$src/*" -DestinationPath "Swayve-${{ needs.version.outputs.tag }}-windows.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows
           path: '*.zip'
@@ -189,11 +209,14 @@ jobs:
     # separately (it was packaged and attached by hand).
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: dazacode/swayve-client
           token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
           ref: ${{ needs.version.outputs.tag }}
+          # No step here pushes, so the PAT is not kept in .git/config where
+          # everything the build runs afterwards could read it.
+          persist-credentials: false
 
       - name: Install Linux build and packaging dependencies
         run: |
@@ -229,7 +252,14 @@ jobs:
         # directly. Via LLVM's official script rather than a PPA, exported as
         # CC/CXX so flutter build linux's own CMake invocation picks it up.
         run: |
-          wget https://apt.llvm.org/llvm.sh
+          set -euo pipefail
+          # llvm.sh is a remote script executed as root. Pin it by content: if
+          # upstream changes it this fails loudly, so the new script gets read
+          # before the hash is updated, rather than whatever is served that day
+          # running unreviewed with root on a runner holding a checkout.
+          LLVM_SH_SHA256=03878e08f47b66cc95bc4b544b0db3c6d9ce8d60e6cf2492ae357984330a9eae
+          curl -fsSLo llvm.sh https://apt.llvm.org/llvm.sh
+          echo "$LLVM_SH_SHA256  llvm.sh" | sha256sum -c -
           chmod +x llvm.sh
           sudo ./llvm.sh 20
           echo "CC=clang-20" >> "$GITHUB_ENV"
@@ -243,7 +273,7 @@ jobs:
           echo "CFLAGS=-Wno-unknown-warning-option" >> "$GITHUB_ENV"
           echo "CXXFLAGS=-Wno-unknown-warning-option" >> "$GITHUB_ENV"
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: '3.47.0'
           channel: stable
@@ -284,7 +314,7 @@ jobs:
       - name: List what was produced
         run: ls -lh dist/linux
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux
           path: dist/linux/*
@@ -295,7 +325,7 @@ jobs:
     needs: [version, ios, android, windows, linux]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true
@@ -304,7 +334,7 @@ jobs:
         run: ls -lhR dist
 
       - name: Create the release on swayve-client
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@62c96d0c4e8a889135c1f3a25910db8dbe0e85f7 # v2.3.4
         with:
           repository: dazacode/swayve-client
           token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}

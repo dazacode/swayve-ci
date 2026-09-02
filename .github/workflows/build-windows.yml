@@ -16,6 +16,18 @@ on:
         required: false
         default: main
 
+# Every build authenticates to swayve-client with SWAYVE_CLIENT_TOKEN, not with
+# GITHUB_TOKEN, and writes nothing back to this repo. Declared here so the job's
+# authority is a property of the workflow rather than of a repository setting.
+permissions:
+  contents: read
+
+# One build per ref at a time: re-dispatching supersedes the run already in
+# flight instead of double-booking a runner with a superseded commit.
+concurrency:
+  group: build-windows-${{ inputs.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Release build
@@ -23,14 +35,17 @@ jobs:
 
     steps:
       - name: Check out swayve-client
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: dazacode/swayve-client
           token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
+          # No step here pushes, so the PAT is not kept in .git/config where
+          # everything the build runs afterwards could read it.
+          persist-credentials: false
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: '3.47.0'
           channel: stable
@@ -54,7 +69,7 @@ jobs:
         run: flutter build windows --release
 
       - name: Upload the app
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Swayve-windows
           path: build/windows/x64/runner/Release/
