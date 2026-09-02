@@ -353,6 +353,11 @@ jobs:
     name: Publish release
     needs: [version, ios, android, windows, linux]
     runs-on: ubuntu-latest
+    # The swayve-ci release below is written with GITHUB_TOKEN, so this one job
+    # needs more than the workflow's read-only default. swayve-client's release
+    # is written with SWAYVE_CLIENT_TOKEN and is unaffected either way.
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -370,6 +375,43 @@ jobs:
           tag_name: ${{ needs.version.outputs.tag }}
           name: Swayve ${{ needs.version.outputs.tag }}
           generate_release_notes: true
+          files: dist/*
+          body: |
+            Both halves of Swayve ${{ needs.version.outputs.tag }}: the
+            computer that holds the library, and the phone that syncs from it.
+
+            - **Windows** — unzip and run `music_sync.exe`.
+            - **Linux** — three packages, pick one: the `.AppImage` needs no
+              install and runs on essentially any x86_64 distro; the `.deb` is
+              for Ubuntu/Debian and derivatives; the `.rpm` is for Fedora and
+              other RPM-based distros.
+            - **Android** — take `arm64-v8a` unless you know otherwise; it
+              covers essentially every phone still in use. You'll need "install
+              unknown apps" enabled. Nothing expires.
+            - **iPhone** — the IPA is unsigned; install it with Sideloadly or
+              AltStore, or re-sign it yourself. Signed with a free Apple ID it
+              stops opening after seven days and has to be installed again.
+
+            Update both devices. If one is left behind far enough that the two
+            can no longer talk, the phone will say so and point back here
+            rather than failing quietly.
+
+            Built by [swayve-ci](https://github.com/dazacode/swayve-ci).
+
+      # Published here as well, and this is the copy that matters for
+      # auto-update. `kReleaseRepo` in swayve-client names this repository
+      # because the app's update check is unauthenticated and swayve-client is
+      # private -- GitHub answers 404 for a private repo, which the checker
+      # reads as "nothing published yet". A release that exists only on
+      # swayve-client is therefore invisible to every installed copy of the
+      # app. The tag is created here on the fly against this repository's own
+      # HEAD; nothing reads it as a source ref, it is the anchor the release
+      # and its assets hang from.
+      - name: Create the release on swayve-ci, which the app checks for updates
+        uses: softprops/action-gh-release@62c96d0c4e8a889135c1f3a25910db8dbe0e85f7 # v2.3.4
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Swayve ${{ needs.version.outputs.tag }}
           files: dist/*
           body: |
             Both halves of Swayve ${{ needs.version.outputs.tag }}: the
