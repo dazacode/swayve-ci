@@ -61,7 +61,7 @@ jobs:
 
     steps:
       - name: Check out swayve-client
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dazacode/swayve-client
           token: ${{ secrets.SWAYVE_CLIENT_TOKEN }}
@@ -194,7 +194,7 @@ jobs:
 
       - name: Upload simulator log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: simulator-console-log
           path: sim-console.log
@@ -228,7 +228,7 @@ jobs:
           ls -lh "build/ipa/$NAME"
 
       - name: Upload the IPA
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # The exact ref this build came from, baked into the artifact name
           # itself (item 6) — not just this run's own metadata, which is easy
@@ -241,7 +241,7 @@ jobs:
 
       - name: Upload build logs on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ios-build-diagnostics
           path: |
