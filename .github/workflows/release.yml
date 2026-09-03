@@ -154,6 +154,41 @@ jobs:
           fi
           echo "Patched $patched file(s)."
 
+      # The release signing key, decoded from repository secrets.
+      #
+      # Before this existed CI signed every release APK with Gradle's debug
+      # key, which is generated per machine — so a fresh runner produced a
+      # differently signed APK every single build, and Android refused to
+      # install one release over the previous one. Testers had to uninstall
+      # first, losing their downloaded music, likes and pairing every time.
+      # The in-app updater cannot work without a stable key, so this step is
+      # load-bearing rather than a nicety.
+      #
+      # Hard-fails when the secret is missing. A silent fallback to debug
+      # signing is precisely the failure this replaces: it produces a working
+      # APK that quietly cannot be installed as an update, and nothing about
+      # the build looks wrong.
+      - name: Restore the release signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set on this repository. Without it every build is signed with a throwaway key and cannot be installed as an update."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > android/app/swayve-release.jks
+          {
+            echo "storeFile=swayve-release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > android/key.properties
+          echo "Keystore restored ($(stat -c%s android/app/swayve-release.jks) bytes)."
+
       - name: Build the APKs
         run: >
           flutter build apk --release --split-per-abi
@@ -170,6 +205,25 @@ jobs:
             mv "$apk" "Swayve-${{ needs.version.outputs.tag }}-$abi.apk"
           done
           ls -lh Swayve-*.apk
+
+      # Proves the key actually reached the APK. `flutter build apk` succeeds
+      # just as happily with the debug fallback in build.gradle.kts, so "the
+      # build passed" says nothing about whether this release can be installed
+      # over the last one.
+      - name: Check the APKs carry the release signature
+        run: |
+          set -euo pipefail
+          apksigner="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          test -n "$apksigner" || { echo "::error::apksigner not found"; exit 1; }
+          for apk in build/app/outputs/flutter-apk/*.apk; do
+            certs="$("$apksigner" verify --print-certs "$apk")"
+            echo "$apk"
+            echo "$certs" | grep -iE 'certificate DN|SHA-256 digest' | sed 's/^/  /'
+            if echo "$certs" | grep -qi 'CN=Android Debug'; then
+              echo "::error::$apk was signed with a debug key — it cannot be installed over an existing Swayve."
+              exit 1
+            fi
+          done
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -380,17 +434,32 @@ jobs:
             Both halves of Swayve ${{ needs.version.outputs.tag }}: the
             computer that holds the library, and the phone that syncs from it.
 
+            **This is the last release you install by hand.** Turn on "Check
+            GitHub for updates" in Settings → About and the next one announces
+            itself the moment you open the app, with a button that fetches and
+            installs it: Windows and the Linux AppImage replace themselves and
+            restart, Android hands the APK to the system installer, and iPhone
+            opens AltStore or SideStore.
+
             - **Windows** — unzip and run `music_sync.exe`.
             - **Linux** — three packages, pick one: the `.AppImage` needs no
-              install and runs on essentially any x86_64 distro; the `.deb` is
-              for Ubuntu/Debian and derivatives; the `.rpm` is for Fedora and
-              other RPM-based distros.
+              install, runs on essentially any x86_64 distro, and is the only
+              one that can update itself; the `.deb` is for Ubuntu/Debian and
+              derivatives and the `.rpm` for Fedora, and both belong to your
+              package manager from then on.
             - **Android** — take `arm64-v8a` unless you know otherwise; it
               covers essentially every phone still in use. You'll need "install
-              unknown apps" enabled. Nothing expires.
-            - **iPhone** — the IPA is unsigned; install it with Sideloadly or
-              AltStore, or re-sign it yourself. Signed with a free Apple ID it
-              stops opening after seven days and has to be installed again.
+              unknown apps" enabled. **Uninstall any earlier beta first.**
+              Every build before this one was signed with a throwaway key, so
+              Android will not install this over it. That is a one-time cost:
+              from here on every release installs straight over the top and
+              keeps your downloads, likes and pairing.
+            - **iPhone** — the IPA is unsigned; install it with Sideloadly,
+              AltStore or SideStore, or re-sign it yourself. Signed with a free
+              Apple ID it stops opening after seven days and has to be
+              installed again. For one-tap updates, add this source in
+              AltStore or SideStore:
+              `https://raw.githubusercontent.com/dazacode/swayve-ci/main/swayve-source.json`
 
             Update both devices. If one is left behind far enough that the two
             can no longer talk, the phone will say so and point back here
@@ -417,20 +486,152 @@ jobs:
             Both halves of Swayve ${{ needs.version.outputs.tag }}: the
             computer that holds the library, and the phone that syncs from it.
 
+            **This is the last release you install by hand.** Turn on "Check
+            GitHub for updates" in Settings → About and the next one announces
+            itself the moment you open the app, with a button that fetches and
+            installs it: Windows and the Linux AppImage replace themselves and
+            restart, Android hands the APK to the system installer, and iPhone
+            opens AltStore or SideStore.
+
             - **Windows** — unzip and run `music_sync.exe`.
             - **Linux** — three packages, pick one: the `.AppImage` needs no
-              install and runs on essentially any x86_64 distro; the `.deb` is
-              for Ubuntu/Debian and derivatives; the `.rpm` is for Fedora and
-              other RPM-based distros.
+              install, runs on essentially any x86_64 distro, and is the only
+              one that can update itself; the `.deb` is for Ubuntu/Debian and
+              derivatives and the `.rpm` for Fedora, and both belong to your
+              package manager from then on.
             - **Android** — take `arm64-v8a` unless you know otherwise; it
               covers essentially every phone still in use. You'll need "install
-              unknown apps" enabled. Nothing expires.
-            - **iPhone** — the IPA is unsigned; install it with Sideloadly or
-              AltStore, or re-sign it yourself. Signed with a free Apple ID it
-              stops opening after seven days and has to be installed again.
+              unknown apps" enabled. **Uninstall any earlier beta first.**
+              Every build before this one was signed with a throwaway key, so
+              Android will not install this over it. That is a one-time cost:
+              from here on every release installs straight over the top and
+              keeps your downloads, likes and pairing.
+            - **iPhone** — the IPA is unsigned; install it with Sideloadly,
+              AltStore or SideStore, or re-sign it yourself. Signed with a free
+              Apple ID it stops opening after seven days and has to be
+              installed again. For one-tap updates, add this source in
+              AltStore or SideStore:
+              `https://raw.githubusercontent.com/dazacode/swayve-ci/main/swayve-source.json`
 
             Update both devices. If one is left behind far enough that the two
             can no longer talk, the phone will say so and point back here
             rather than failing quietly.
 
             Built by [swayve-ci](https://github.com/dazacode/swayve-ci).
+
+      # The AltStore / SideStore source, regenerated from what was just
+      # published.
+      #
+      # iOS is the one platform where Swayve cannot install its own update —
+      # there is no API for it, and a free-Apple-ID sideload has no route to
+      # one. What it can do is hand the IPA's address to whatever sideloaded
+      # it, and this file is the other half of that: a source AltStore and
+      # SideStore poll themselves, so an iPhone is offered the new build in the
+      # sideloader without anybody opening Swayve at all.
+      #
+      # The version written here is read out of the IPA's own Info.plist rather
+      # than taken from the tag, and that is the whole reason this is a script
+      # instead of a template. AltStore decides whether an update exists by
+      # comparing this string with the installed app's
+      # CFBundleShortVersionString; a tag-shaped string that Xcode never wrote
+      # would leave every iPhone permanently one update behind, forever.
+      - name: Update the AltStore source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          path: source-repo
+
+      - name: Write swayve-source.json
+        working-directory: source-repo
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 - "$GITHUB_WORKSPACE/dist" "$TAG" <<'PYTHON'
+          import glob, json, os, plistlib, sys, zipfile
+          from datetime import datetime, timezone
+
+          dist, tag = sys.argv[1], sys.argv[2]
+
+          ipas = glob.glob(os.path.join(dist, "*.ipa"))
+          if not ipas:
+              raise SystemExit("no IPA in the release; nothing to publish to a source")
+          ipa = ipas[0]
+
+          with zipfile.ZipFile(ipa) as archive:
+              name = next(
+                  entry for entry in archive.namelist()
+                  if entry.count("/") == 2
+                  and entry.startswith("Payload/")
+                  and entry.endswith(".app/Info.plist")
+              )
+              info = plistlib.loads(archive.read(name))
+
+          version = info["CFBundleShortVersionString"]
+          bundle = info["CFBundleIdentifier"]
+          asset = os.path.basename(ipa)
+          url = f"https://github.com/dazacode/swayve-ci/releases/download/{tag}/{asset}"
+
+          entry = {
+              "version": version,
+              "buildVersion": info.get("CFBundleVersion", ""),
+              "date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "localizedDescription": f"Swayve {tag}.",
+              "downloadURL": url,
+              "size": os.path.getsize(ipa),
+              "minOSVersion": info.get("MinimumOSVersion", "13.0"),
+          }
+
+          path = "swayve-source.json"
+          try:
+              with open(path, encoding="utf-8") as handle:
+                  source = json.load(handle)
+              app = source["apps"][0]
+              versions = [v for v in app.get("versions", []) if v["version"] != version]
+          except (FileNotFoundError, KeyError, IndexError, json.JSONDecodeError):
+              source = {
+                  "name": "Swayve",
+                  "identifier": "dev.seanmusic.swayve",
+                  "sourceURL": "https://raw.githubusercontent.com/dazacode/swayve-ci/main/swayve-source.json",
+                  "apps": [{}],
+              }
+              app = source["apps"][0]
+              versions = []
+
+          app.update({
+              "name": "Swayve",
+              "bundleIdentifier": bundle,
+              "developerName": "Swayve",
+              "subtitle": "Your music, on your devices.",
+              "localizedDescription": (
+                  "Swayve syncs a music library between a computer and a phone "
+                  "over your own network. No accounts, no cloud, no streaming "
+                  "service."
+              ),
+              "iconURL": "https://raw.githubusercontent.com/dazacode/swayve-ci/main/swayve-icon.png",
+              "tintColor": "4D6BFF",
+              # AltStore reads the top-level fields as "the current release"
+              # and the array as the history it can roll back through.
+              "version": entry["version"],
+              "versionDate": entry["date"],
+              "versionDescription": entry["localizedDescription"],
+              "downloadURL": entry["downloadURL"],
+              "size": entry["size"],
+              "versions": [entry] + versions[:9],
+          })
+          source["apps"][0] = app
+
+          with open(path, "w", encoding="utf-8") as handle:
+              handle.write(json.dumps(source, indent=2) + chr(10))
+
+          print(f"swayve-source.json now offers {version} ({asset})")
+          PYTHON
+
+          if git diff --quiet -- swayve-source.json; then
+            echo "Source unchanged."
+            exit 0
+          fi
+          git config user.name "swayve-ci"
+          git config user.email "swayve-ci@users.noreply.github.com"
+          git add swayve-source.json
+          git commit -m "Offer ${TAG} to AltStore and SideStore"
+          git push

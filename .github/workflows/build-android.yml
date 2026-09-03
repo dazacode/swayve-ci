@@ -108,12 +108,66 @@ jobs:
           fi
           echo "Patched $patched file(s)."
 
+      # The release signing key, decoded from repository secrets.
+      #
+      # Before this existed CI signed every release APK with Gradle's debug
+      # key, which is generated per machine — so a fresh runner produced a
+      # differently signed APK every single build, and Android refused to
+      # install one release over the previous one. Testers had to uninstall
+      # first, losing their downloaded music, likes and pairing every time.
+      # The in-app updater cannot work without a stable key, so this step is
+      # load-bearing rather than a nicety.
+      #
+      # Hard-fails when the secret is missing. A silent fallback to debug
+      # signing is precisely the failure this replaces: it produces a working
+      # APK that quietly cannot be installed as an update, and nothing about
+      # the build looks wrong.
+      - name: Restore the release signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set on this repository. See KEYSTORE-README in the keystore folder; without it every build is signed with a throwaway key and cannot be installed as an update."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > android/app/swayve-release.jks
+          {
+            echo "storeFile=swayve-release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > android/key.properties
+          echo "Keystore restored ($(stat -c%s android/app/swayve-release.jks) bytes)."
+
       - name: Build the APKs
         run: flutter build apk --release --split-per-abi
 
       - name: Show what was produced
         run: ls -lh build/app/outputs/flutter-apk/
 
+
+      # Proves the key actually reached the APK. `flutter build apk` succeeds
+      # just as happily with the debug fallback in build.gradle.kts, so
+      # "the build passed" says nothing about whether this release can be
+      # installed over the last one.
+      - name: Check the APKs carry the release signature
+        run: |
+          set -euo pipefail
+          apksigner="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          test -n "$apksigner" || { echo "::error::apksigner not found"; exit 1; }
+          for apk in build/app/outputs/flutter-apk/*.apk; do
+            certs="$("$apksigner" verify --print-certs "$apk")"
+            echo "$apk"
+            echo "$certs" | grep -iE 'certificate DN|SHA-256 digest' | sed 's/^/  /'
+            if echo "$certs" | grep -qi 'CN=Android Debug'; then
+              echo "::error::$apk was signed with a debug key — it cannot be installed over an existing Swayve."
+              exit 1
+            fi
+          done
       - name: Upload the APKs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
