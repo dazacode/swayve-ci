@@ -1,0 +1,32 @@
+{
+  "name": "Swayve",
+  "identifier": "dev.seanmusic.swayve",
+  "sourceURL": "https://raw.githubusercontent.com/dazacode/swayve-ci/main/swayve-source.json",
+  "apps": [
+    {
+      "name": "Swayve",
+      "bundleIdentifier": "dev.seanmusic.musicSync",
+      "developerName": "Swayve",
+      "subtitle": "Your music, on your devices.",
+      "localizedDescription": "Swayve syncs a music library between a computer and a phone over your own network. No accounts, no cloud, no streaming service.",
+      "iconURL": "https://raw.githubusercontent.com/dazacode/swayve-ci/main/swayve-icon.png",
+      "tintColor": "4D6BFF",
+      "version": "1.2.0.5.2",
+      "versionDate": "2026-09-03T05:56:47Z",
+      "versionDescription": "Swayve v1.2.0-beta.5.2.",
+      "downloadURL": "https://github.com/dazacode/swayve-ci/releases/download/v1.2.0-beta.5.2/Swayve-v1.2.0-beta.5.2-unsigned.ipa",
+      "size": 16597100,
+      "versions": [
+        {
+          "version": "1.2.0.5.2",
+          "buildVersion": "12",
+          "date": "2026-09-03T05:56:47Z",
+          "localizedDescription": "Swayve v1.2.0-beta.5.2.",
+          "downloadURL": "https://github.com/dazacode/swayve-ci/releases/download/v1.2.0-beta.5.2/Swayve-v1.2.0-beta.5.2-unsigned.ipa",
+          "size": 16597100,
+          "minOSVersion": "15.0"
+        }
+      ]
+    }
+  ]
+}

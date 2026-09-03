@@ -626,12 +626,16 @@ jobs:
           print(f"swayve-source.json now offers {version} ({asset})")
           PYTHON
 
-          if git diff --quiet -- swayve-source.json; then
+          # Staged before the comparison, and that is the fix rather than a
+          # style choice: `git diff` only looks at tracked files, so the first
+          # release to write this file saw "no changes" and committed nothing.
+          # `--cached` asks about the index, which an untracked file is now in.
+          git add swayve-source.json
+          if git diff --cached --quiet -- swayve-source.json; then
             echo "Source unchanged."
             exit 0
           fi
           git config user.name "swayve-ci"
           git config user.email "swayve-ci@users.noreply.github.com"
-          git add swayve-source.json
           git commit -m "Offer ${TAG} to AltStore and SideStore"
           git push
